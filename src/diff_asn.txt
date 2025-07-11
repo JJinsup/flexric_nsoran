@@ -1,0 +1,106 @@
+diff sm/rc_sm/ie/e2sm_rc_v1_03_standard.asn sm/rc_sm/ie/e2sm_rc_v1_03_modified.asn
+
+967,969c967,968
+< 		...,
+< 		actionDefinition-Format4			E2SM-RC-ActionDefinition-Format4
+< 
+---
+> 		actionDefinition-Format4			E2SM-RC-ActionDefinition-Format4,
+> 		...
+1043,1045c1042,1043
+< 		...,
+< 		indicationHeader-Format3			E2SM-RC-IndicationHeader-Format3
+< 
+---
+> 		indicationHeader-Format3			E2SM-RC-IndicationHeader-Format3,
+> 	  ...
+1074,1083c1072,1080
+< ric-indicationMessage-formats		CHOICE {
+< 		indicationMessage-Format1			E2SM-RC-IndicationMessage-Format1,
+< 		indicationMessage-Format2			E2SM-RC-IndicationMessage-Format2,
+< 		indicationMessage-Format3			E2SM-RC-IndicationMessage-Format3,
+<     		indicationMessage-Format4			E2SM-RC-IndicationMessage-Format4,
+< 		indicationMessage-Format5			E2SM-RC-IndicationMessage-Format5,
+< 		...,
+< 		indicationMessage-Format6			E2SM-RC-IndicationMessage-Format6
+< 
+< 	},
+---
+>   ric-indicationMessage-formats		CHOICE {
+>     indicationMessage-Format1			E2SM-RC-IndicationMessage-Format1,
+>       indicationMessage-Format2			E2SM-RC-IndicationMessage-Format2,
+>       indicationMessage-Format3			E2SM-RC-IndicationMessage-Format3,
+>       indicationMessage-Format4			E2SM-RC-IndicationMessage-Format4,
+>       indicationMessage-Format5			E2SM-RC-IndicationMessage-Format5,
+>       indicationMessage-Format6			E2SM-RC-IndicationMessage-Format6,
+>       ...
+>   },
+1214,1215c1211,1212
+< 		...,
+< 		controlHeader-Format2				E2SM-RC-ControlHeader-Format2
+---
+>   controlHeader-Format2				E2SM-RC-ControlHeader-Format2,
+> 	...
+1241,1243c1238,1239
+< 		...,
+< 		controlMessage-Format2				E2SM-RC-ControlMessage-Format2
+< 
+---
+> 		controlMessage-Format2				E2SM-RC-ControlMessage-Format2,
+> 		...
+1284,1286c1280,1283
+< 		...,
+< 		controlOutcome-Format2			E2SM-RC-ControlOutcome-Format2,
+< 		controlOutcome-Format3			E2SM-RC-ControlOutcome-Format3	},
+---
+> 		controlOutcome-Format2		E2SM-RC-ControlOutcome-Format2,
+> 		controlOutcome-Format3		E2SM-RC-ControlOutcome-Format3,	
+> 		...
+>     },
+
+diff sm/kpm_sm/kpm_sm_v03.00/ie/e2sm_kpm_v03.00_standard.asn1 sm/kpm_sm/kpm_sm_v03.00/ie/e2sm_kpm_v03.00_modified.asn1
+
+97d96
+<         ...,
+102c101,102
+<         sNSSAI                          ENUMERATED {true, ...}
+---
+>         sNSSAI                          ENUMERATED {true, ...},
+>         ...
+121,122c121,122
+<         ...,
+<         valueReal                       REAL
+---
+>         valueReal                       REAL,
+>         ...
+212,213c212,213
+<         ...,
+<         binRangeDef                         BinRangeDefinition                  OPTIONAL
+---
+>         binRangeDef                         BinRangeDefinition                  OPTIONAL,
+>         ...
+222,223c222,223
+<         ...,
+<         matchingUEidPerGP               MatchingUEidPerGP                       OPTIONAL
+---
+>         matchingUEidPerGP               MatchingUEidPerGP                       OPTIONAL,
+>         ...
+322d321
+<                 ...,
+324c323,324
+<                 actionDefinition-Format5                E2SM-KPM-ActionDefinition-Format5
+---
+>                 actionDefinition-Format5                E2SM-KPM-ActionDefinition-Format5,
+>                 ...
+333,334c333,334
+<         ...,
+<         distMeasBinRangeInfo                    DistMeasurementBinRangeList             OPTIONAL
+---
+>         distMeasBinRangeInfo                    DistMeasurementBinRangeList             OPTIONAL,
+>         ...
+392,393c392,393
+<                 ...,
+<                 indicationMessage-Format3               E2SM-KPM-IndicationMessage-Format3
+---
+>                 indicationMessage-Format3               E2SM-KPM-IndicationMessage-Format3,
+>                 ...
