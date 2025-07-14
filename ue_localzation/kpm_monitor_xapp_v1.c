@@ -1,6 +1,7 @@
 /*
  * KPM Monitor xApp - Orange 기반
  * 100ms 주기로 RIC Indication 메시지 수신하고 SINR 값 실시간 출력
+ * 인코딩된 SINR < 40 인경우에만 E2->xApp으로수신됨
  * Based on orange_energy_saving_with_CU.c
  */
 
