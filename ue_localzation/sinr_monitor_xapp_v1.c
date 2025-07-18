@@ -302,7 +302,7 @@ static kpm_sub_data_t gen_kpm_subs(kpm_ran_function_def_t const* ran_func)
         
         // Filter 설정
         test_cond_type_e const type = IsStat_TEST_COND_TYPE;
-        test_cond_e const condition = LESSTHAN_TEST_COND;
+        test_cond_e const condition = GREATERTHAN_TEST_COND;
         int const value = 0;
         kpm_sub.ad[0].frm_4.matching_cond_lst[0].test_info_lst = 
             filter_predicate(type, condition, value);
