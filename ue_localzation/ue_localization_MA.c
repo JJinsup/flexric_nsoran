@@ -1,6 +1,7 @@
 /*
  * SINR Monitor xApp with Cell Coordinates - Orange 기반
  * Cell ID별 좌표 정보를 포함한 SINR 데이터 출력
+ * 5초간 이동평균 처리 후 전송
  * Format: timestamp, UE, serving cell ID, serving cell SINR, top 3 neighbor SINR, serving cell x, serving cell y
  */
 
