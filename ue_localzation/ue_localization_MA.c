@@ -1,7 +1,6 @@
 /*
  * SINR Monitor xApp with Cell Coordinates - Orange 기반
  * Cell ID별 좌표 정보를 포함한 SINR 데이터 출력
- * 5초간 이동평균 처리 후 전송
  * Format: timestamp, UE, serving cell ID, serving cell SINR, top 3 neighbor SINR, serving cell x, serving cell y
  */
 
@@ -72,6 +71,7 @@ typedef struct {
     uint64_t timestamp;
     uint16_t ueID;
     uint16_t servingCellID;
+    uint16_t neighborCellID[3];  // 🔥 추가!
     double servingSINR;
     double neighborSINR[3];
     double servingCellX, servingCellY;
@@ -145,14 +145,14 @@ static void send_window_batch_to_python(ue_adaptive_window_t* window) {
     // CSV 형태로 전송
     char batch_line[256];
     snprintf(batch_line, sizeof(batch_line),
-        "%lu,%d,%d,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f\n",
+        "%lu,%d,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%.1f,%.1f\n",
         avg_timestamp,
         window->ue_id,
         window->current_serving_cell,
         avg_serving_sinr,
-        avg_neighbor_sinr[0],
-        avg_neighbor_sinr[1], 
-        avg_neighbor_sinr[2],
+        last->neighborCellID[0], avg_neighbor_sinr[0],  //  Cell ID + SINR 쌍
+        last->neighborCellID[1], avg_neighbor_sinr[1],  //  Cell ID + SINR 쌍
+        last->neighborCellID[2], avg_neighbor_sinr[2],  //  Cell ID + SINR 쌍
         last->servingCellX,
         last->servingCellY
     );
@@ -577,9 +577,15 @@ static void process_measurements_to_adaptive_windows(void) {
         point.servingCellID = m->servingCellID;
         point.servingSINR = m->servingSINR;
         
-        // top 3 neighbor SINR
+        // top 3 neighbor SINR + Cell ID
         for (int j = 0; j < 3; j++) {
-            point.neighborSINR[j] = ((size_t)j < m->num_neighbors) ? m->neighbors[j].neighSINR : 0.0;
+            if ((size_t)j < m->num_neighbors) {
+                point.neighborCellID[j] = m->neighbors[j].neighCellID;  // 🔥 추가!
+                point.neighborSINR[j] = m->neighbors[j].neighSINR;
+            } else {
+                point.neighborCellID[j] = 0;  // 🔥 추가!
+                point.neighborSINR[j] = 0.0;
+            }
         }
         
         point.servingCellX = m->servingPos ? m->servingPos->x : 0.0;
@@ -609,7 +615,7 @@ static void sm_cb_kpm(sm_ag_if_rd_t const* rd)
         
         // CSV 헤더 출력 (첫 번째 indication에서만)
         if (indication_counter == 0) {
-            log_both("timestamp,UE_ID,serving_cell_ID,serving_cell_SINR,neighbor_1_SINR,neighbor_2_SINR,neighbor_3_SINR,serving_cell_x,serving_cell_y\n");
+            log_both("timestamp,UE_ID,serving_cell_ID,serving_cell_SINR,neighbor1_ID,neighbor_1_SINR,neighbor2_ID,neighbor_2_SINR,neighbor3_ID,neighbor_3_SINR,serving_cell_x,serving_cell_y\n");
         }
         
         indication_counter++;
