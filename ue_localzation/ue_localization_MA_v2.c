@@ -549,8 +549,8 @@ static kpm_sub_data_t gen_kpm_subs(kpm_ran_function_def_t const* ran_func) {
         kpm_sub.ad[0].frm_4.matching_cond_lst = calloc(1, sizeof(matching_condition_format_4_lst_t));
         
         test_cond_type_e const type = IsStat_TEST_COND_TYPE;
-        test_cond_e const condition = GREATERTHAN_TEST_COND;
-        int const value = 2; // neighbor cell 3개 이상인 경우에만
+        test_cond_e const condition = GREATERTHAN_TEST_COND; // 무조건보내게설정
+        int const value = 2; // 무조건보내게설정
         kpm_sub.ad[0].frm_4.matching_cond_lst[0].test_info_lst = 
             filter_predicate(type, condition, value);
         
