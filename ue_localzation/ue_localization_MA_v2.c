@@ -23,6 +23,7 @@
 // =============================================================================
 // CONSTANTS & GLOBAL VARIABLES
 // =============================================================================
+#define WINDOW_SIZE 50
 
 static int socket_fd = -1;
 static bool socket_connected = false;
@@ -32,11 +33,6 @@ static bool monitoring_active = true;
 static uint64_t const period_ms = 100;  
 static int indication_counter = 0;
 static FILE *log_file = NULL;
-
-// 🔥 시뮬레이션 시간 기준 5초 간격 처리
-static const uint64_t PREDICTION_INTERVAL_US = 5000000;  // 5초 (마이크로초)
-static uint64_t last_prediction_time = 0;
-
 // =============================================================================
 // DATA STRUCTURES
 // =============================================================================
@@ -65,24 +61,37 @@ typedef struct {
     uint16_t ueID;
     uint16_t servingCellID;
     
-    // SINR 값들 (이동평균 계산용)
-    double serving_sinr_sum;
-    int serving_sinr_count;
+    // Circular buffer for serving SINR
+    double serving_sinr_buffer[WINDOW_SIZE];
+    int serving_buffer_idx;
+    int serving_sample_count;
     
+    // Neighbor buffers
     struct {
         uint16_t neighCellID;
-        double sinr_sum;
-        int sinr_count;
+        double sinr_buffer[WINDOW_SIZE];
+        int buffer_idx;
+        int sample_count;
+        bool is_active;
     } neighbors[10];
+
+    // 추가: 전체 측정값 히스토리 (이동평균용)
+    struct {
+        double serving_sinr;
+        double neighbor_sinrs[10];
+        uint16_t neighbor_ids[10];
+        int active_neighbor_count;
+        uint64_t timestamp;
+    } measurement_history[WINDOW_SIZE];
+
     int active_neighbors;
-    
-    bool has_data;
-    uint64_t first_timestamp;
+    int history_idx;        // 현재 쓰기 위치
+    int history_count;      // 누적된 측정값 개수
     uint64_t last_timestamp;
 } ue_buffer_t;
 
 // UE 버퍼 (최대 20개 UE)
-static ue_buffer_t ue_buffers[20];
+static ue_buffer_t ue_buffers[28];
 static int num_active_ues = 0;
 
 // Orange 스타일 측정값 파싱 구조체
@@ -115,11 +124,10 @@ static ue_buffer_t* get_or_create_ue_buffer(uint16_t ueID) {
     }
     
     // 새로운 UE 생성
-    if (num_active_ues < 20) {
+    if (num_active_ues < 28) {
         ue_buffer_t* new_ue = &ue_buffers[num_active_ues];
         memset(new_ue, 0, sizeof(ue_buffer_t));
         new_ue->ueID = ueID;
-        new_ue->has_data = false;
         num_active_ues++;
         printf("📱 New UE buffer created: UE_%d (total: %d)\n", ueID, num_active_ues);
         return new_ue;
@@ -155,124 +163,188 @@ static bool isMeasNameContains(const char* meas_name, const char* name) {
     return strncmp(meas_name, name, strlen(name)) == 0;
 }
 
-// =============================================================================
-// 🔥 이동평균 처리 함수들
-// =============================================================================
 
-// UE 버퍼에 serving SINR 추가
-static void add_serving_sinr_to_buffer(ue_buffer_t* ue_buf, uint16_t cellID, double sinr, uint64_t timestamp) {
-    ue_buf->servingCellID = cellID;
-    ue_buf->serving_sinr_sum += sinr;
-    ue_buf->serving_sinr_count++;
-    
-    if (!ue_buf->has_data) {
-        ue_buf->first_timestamp = timestamp;
-        ue_buf->has_data = true;
+// =============================================================================
+// 🔥 50개 샘플 이동평균 처리 함수들
+// =============================================================================
+// UE별 이동평균 계산 및 전송 (학습 데이터와 동일한 방식)
+static void check_and_send_ue_data(ue_buffer_t* ue_buf, uint64_t timestamp) {
+    if (ue_buf->history_count == 0) {
+        return;
     }
-    ue_buf->last_timestamp = timestamp;
-}
-
-// UE 버퍼에 neighbor SINR 추가
-static void add_neighbor_sinr_to_buffer(ue_buffer_t* ue_buf, uint16_t neighCellID, double sinr) {
-    // 기존 neighbor 찾기
-    for (int i = 0; i < ue_buf->active_neighbors; i++) {
-        if (ue_buf->neighbors[i].neighCellID == neighCellID) {
-            ue_buf->neighbors[i].sinr_sum += sinr;
-            ue_buf->neighbors[i].sinr_count++;
-            return;
+    
+    // 🔥 슬라이딩 윈도우 크기 결정
+    int window_size = (ue_buf->history_count < WINDOW_SIZE) ? 
+                      ue_buf->history_count : WINDOW_SIZE;
+    
+    // 🔥 Serving SINR 슬라이딩 윈도우 이동평균 계산
+    double serving_sinr_sum = 0.0;
+    for (int i = 0; i < window_size; i++) {
+        int read_idx;
+        if (ue_buf->history_count <= WINDOW_SIZE) {
+            // 50개 미만: 처음부터 현재까지 모든 데이터
+            read_idx = i;
+        } else {
+            // 50개 이상: 최근 50개만 (슬라이딩 윈도우)
+            read_idx = (ue_buf->history_idx - WINDOW_SIZE + i + WINDOW_SIZE) % WINDOW_SIZE;
         }
+        serving_sinr_sum += ue_buf->measurement_history[read_idx].serving_sinr;
     }
+    double serving_sinr_ma = serving_sinr_sum / window_size;
     
-    // 새로운 neighbor 추가
-    if (ue_buf->active_neighbors < 10) {
-        int idx = ue_buf->active_neighbors;
-        ue_buf->neighbors[idx].neighCellID = neighCellID;
-        ue_buf->neighbors[idx].sinr_sum = sinr;
-        ue_buf->neighbors[idx].sinr_count = 1;
-        ue_buf->active_neighbors++;
-    }
-}
-
-// 🔥 이동평균 계산 및 Python 전송
-static void process_and_send_averaged_data(uint64_t current_simulation_time) {
-    printf("\n🧮 Processing 5-second moving averages (simulation time: %lu μs)\n", current_simulation_time);
+    // 🔥 Neighbor SINR 슬라이딩 윈도우 이동평균 계산
+    typedef struct {
+        uint16_t cellID;
+        double sinr_sum;
+        int count;
+        double avg_sinr;
+    } neighbor_avg_t;
     
-    int processed_ues = 0;
+    neighbor_avg_t neighbor_avgs[50];
+    int unique_neighbors = 0;
     
-    for (int i = 0; i < num_active_ues; i++) {
-        ue_buffer_t* ue_buf = &ue_buffers[i];
-        
-        if (!ue_buf->has_data || ue_buf->serving_sinr_count == 0) {
-            continue;
+    // 슬라이딩 윈도우 범위에서 neighbor 데이터 수집
+    for (int i = 0; i < window_size; i++) {
+        int read_idx;
+        if (ue_buf->history_count <= WINDOW_SIZE) {
+            read_idx = i;
+        } else {
+            read_idx = (ue_buf->history_idx - WINDOW_SIZE + i + WINDOW_SIZE) % WINDOW_SIZE;
         }
         
-        // 이동평균 계산
-        double avg_serving_sinr = ue_buf->serving_sinr_sum / ue_buf->serving_sinr_count;
-        
-        // Top 3 neighbor 선별 (평균 SINR 기준)
-        double neighbor_sinr[3] = {0.0, 0.0, 0.0};
-        uint16_t neighbor_ids[3] = {0, 0, 0};
-        
-        // neighbor들을 평균 SINR로 정렬
-        for (int n = 0; n < ue_buf->active_neighbors && n < 3; n++) {
-            if (ue_buf->neighbors[n].sinr_count > 0) {
-                neighbor_sinr[n] = ue_buf->neighbors[n].sinr_sum / ue_buf->neighbors[n].sinr_count;
-                neighbor_ids[n] = ue_buf->neighbors[n].neighCellID;
+        // 해당 시점의 neighbor 데이터 처리
+        for (int j = 0; j < ue_buf->measurement_history[read_idx].active_neighbor_count; j++) {
+            uint16_t neighID = ue_buf->measurement_history[read_idx].neighbor_ids[j];
+            double neighSINR = ue_buf->measurement_history[read_idx].neighbor_sinrs[j];
+            
+            // 기존 neighbor 찾기
+            int found_idx = -1;
+            for (int k = 0; k < unique_neighbors; k++) {
+                if (neighbor_avgs[k].cellID == neighID) {
+                    found_idx = k;
+                    break;
+                }
+            }
+            
+            // 새로운 neighbor 추가 또는 기존 neighbor 업데이트
+            if (found_idx == -1 && unique_neighbors < 50) {
+                neighbor_avgs[unique_neighbors].cellID = neighID;
+                neighbor_avgs[unique_neighbors].sinr_sum = neighSINR;
+                neighbor_avgs[unique_neighbors].count = 1;
+                unique_neighbors++;
+            } else if (found_idx != -1) {
+                neighbor_avgs[found_idx].sinr_sum += neighSINR;
+                neighbor_avgs[found_idx].count++;
             }
         }
-        
-        // Cell 위치 정보
-        cell_position_t* serving_pos = get_cell_position(ue_buf->servingCellID);
-        
-        // CSV 형태로 출력 및 Python 전송
-        char line[256];
-        snprintf(line, sizeof(line),
-            "%lu,%d,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%.1f,%.1f\n",
-            current_simulation_time / 1000,  // 밀리초로 변환
-            ue_buf->ueID,
-            ue_buf->servingCellID,
-            avg_serving_sinr,
-            neighbor_ids[0], neighbor_sinr[0],
-            neighbor_ids[1], neighbor_sinr[1],
-            neighbor_ids[2], neighbor_sinr[2],
-            serving_pos ? serving_pos->x : 0.0,
-            serving_pos ? serving_pos->y : 0.0
-        );
-        
-        // 파일 및 소켓 전송
-        if (log_file) {
-            fprintf(log_file, "%s", line);
-            fflush(log_file);
-        }
-        
-        if (socket_connected) {
-            send(socket_fd, line, strlen(line), MSG_NOSIGNAL);
-        }
-        
-        printf("📊 UE_%d: Serving=%.1f dB (Cell %d), Neighbors=[%.1f, %.1f, %.1f] dB, Samples=%d\n",
-               ue_buf->ueID, avg_serving_sinr, ue_buf->servingCellID,
-               neighbor_sinr[0], neighbor_sinr[1], neighbor_sinr[2],
-               ue_buf->serving_sinr_count);
-        
-        processed_ues++;
     }
     
-    printf("✅ Processed %d UEs with 5-second moving averages\n", processed_ues);
+    // 각 neighbor의 평균 계산
+    for (int i = 0; i < unique_neighbors; i++) {
+        neighbor_avgs[i].avg_sinr = neighbor_avgs[i].sinr_sum / neighbor_avgs[i].count;
+    }
     
-    // 🔥 버퍼 초기화 (다음 5초 구간을 위해)
-    for (int i = 0; i < num_active_ues; i++) {
-        ue_buffer_t* ue_buf = &ue_buffers[i];
-        ue_buf->serving_sinr_sum = 0.0;
-        ue_buf->serving_sinr_count = 0;
-        
-        for (int n = 0; n < ue_buf->active_neighbors; n++) {
-            ue_buf->neighbors[n].sinr_sum = 0.0;
-            ue_buf->neighbors[n].sinr_count = 0;
+    // SINR 기준으로 정렬 (상위 3개만 사용)
+    for (int i = 0; i < unique_neighbors - 1; i++) {
+        for (int j = i + 1; j < unique_neighbors; j++) {
+            if (neighbor_avgs[i].avg_sinr < neighbor_avgs[j].avg_sinr) {
+                neighbor_avg_t temp = neighbor_avgs[i];
+                neighbor_avgs[i] = neighbor_avgs[j];
+                neighbor_avgs[j] = temp;
+            }
         }
-        ue_buf->active_neighbors = 0;
-        ue_buf->has_data = false;
+    }
+    
+    // Top 3 neighbor 선별
+    uint16_t top3_ids[3] = {0, 0, 0};
+    double top3_sinr[3] = {0.0, 0.0, 0.0};
+    
+    for (int i = 0; i < 3 && i < unique_neighbors; i++) {
+        top3_ids[i] = neighbor_avgs[i].cellID;
+        top3_sinr[i] = neighbor_avgs[i].avg_sinr;
+    }
+    
+    // Cell 위치 정보
+    cell_position_t* serving_pos = get_cell_position(ue_buf->servingCellID);
+    
+    // 🔥 학습 데이터와 동일한 CSV 형태로 출력
+    char line[512];
+    snprintf(line, sizeof(line),
+        "%lu,%d,%d,%.6f,%d,%.6f,%d,%.6f,%d,%.6f,%.1f,%.1f\n",
+        timestamp / 1000,  // relative_timestamp (ms)
+        ue_buf->ueID,      // ueImsiComplete
+        ue_buf->servingCellID,  // L3 serving Id(m_cellId)
+        serving_sinr_ma,   // L3 serving SINR_ma (슬라이딩 윈도우 평균!)
+        top3_ids[0], top3_sinr[0],  // L3 neigh Id 1, L3 neigh SINR 1_ma
+        top3_ids[1], top3_sinr[1],  // L3 neigh Id 2, L3 neigh SINR 2_ma  
+        top3_ids[2], top3_sinr[2],  // L3 neigh Id 3, L3 neigh SINR 3_ma
+        serving_pos ? serving_pos->x : 0.0,  // gNB_x
+        serving_pos ? serving_pos->y : 0.0   // gNB_y
+    );
+    
+    // 파일 및 소켓 전송
+    if (log_file) {
+        fprintf(log_file, "%s", line);
+        fflush(log_file);
+    }
+    
+    if (socket_connected) {
+        send(socket_fd, line, strlen(line), MSG_NOSIGNAL);
+    }
+    
+    // 🔥 슬라이딩 윈도우 상태 로그
+    if (ue_buf->history_count <= 10 || ue_buf->history_count % 10 == 0) {
+        if (ue_buf->history_count <= WINDOW_SIZE) {
+            printf("📈 UE_%d: MA sent [1~%d] avg=%.1f dB | Total: %d samples\n", 
+                   ue_buf->ueID, window_size, serving_sinr_ma, ue_buf->history_count);
+        } else {
+            int start_sample = ue_buf->history_count - WINDOW_SIZE + 1;
+            int end_sample = ue_buf->history_count;
+            printf("🔄 UE_%d: MA sent [%d~%d] avg=%.1f dB | Sliding window: %d samples\n", 
+                   ue_buf->ueID, start_sample, end_sample, serving_sinr_ma, WINDOW_SIZE);
+        }
     }
 }
+
+// UE별 serving SINR 샘플 추가
+static void add_serving_sample(ue_buffer_t* ue_buf, uint16_t cellID, double sinr, uint64_t timestamp) {
+    ue_buf->servingCellID = cellID;
+    ue_buf->last_timestamp = timestamp;
+    
+    // 🔥 히스토리에 현재 측정값 저장
+    ue_buf->measurement_history[ue_buf->history_idx].serving_sinr = sinr;
+    ue_buf->measurement_history[ue_buf->history_idx].timestamp = timestamp;
+    ue_buf->measurement_history[ue_buf->history_idx].active_neighbor_count = 0; // 초기화
+    
+    // Circular index 업데이트
+    ue_buf->history_idx = (ue_buf->history_idx + 1) % WINDOW_SIZE;
+    if (ue_buf->history_count < WINDOW_SIZE) {
+        ue_buf->history_count++;
+    }
+    
+    // 🔥 매번 이동평균 계산 및 전송
+    check_and_send_ue_data(ue_buf, timestamp);
+}
+
+// UE별 neighbor SINR 샘플 추가  
+static void add_neighbor_sample(ue_buffer_t* ue_buf, uint16_t neighCellID, double sinr) {
+    // 🔥 현재 측정값의 neighbor 정보에 추가
+    int current_idx = (ue_buf->history_idx - 1 + WINDOW_SIZE) % WINDOW_SIZE;
+    
+    // neighbor 배열에 추가 (기존 로직 유지하되 history에 저장)
+    if (ue_buf->measurement_history[current_idx].active_neighbor_count < 10) {
+        int n_idx = ue_buf->measurement_history[current_idx].active_neighbor_count;
+        ue_buf->measurement_history[current_idx].neighbor_ids[n_idx] = neighCellID;
+        ue_buf->measurement_history[current_idx].neighbor_sinrs[n_idx] = sinr;
+        ue_buf->measurement_history[current_idx].active_neighbor_count++;
+    }
+}
+
+// Neighbor 정렬을 위한 구조체
+typedef struct {
+    uint16_t cellID;
+    double avg_sinr;
+} neighbor_rank_t;
 
 // =============================================================================
 // SOCKET COMMUNICATION
@@ -329,15 +401,7 @@ static void log_kpm_measurements(kpm_ind_msg_format_1_t const* msg_frm_1, uint64
         return;
     }
 
-    // 🔥 시뮬레이션 시간 기준 5초 체크
-    if (last_prediction_time == 0) {
-        last_prediction_time = simulation_timestamp;
-        printf("🕐 First prediction timestamp: %lu μs\n", simulation_timestamp);
-    }
-    
-    bool should_process = (simulation_timestamp - last_prediction_time) >= PREDICTION_INTERVAL_US;
-
-    // serving 정보 수집 (버퍼에 누적)
+    // serving 정보 수집 및 50개 샘플 체크
     for(size_t i = 0; i < msg_frm_1->meas_info_lst_len; i++) {
         meas_type_t const meas_type = msg_frm_1->meas_info_lst[i].meas_type;
         meas_data_lst_t const data_item = msg_frm_1->meas_data_lst[i];
@@ -355,10 +419,9 @@ static void log_kpm_measurements(kpm_ind_msg_format_1_t const* msg_frm_1, uint64
                         double sinr = (record_item.value == REAL_MEAS_VALUE) ? 
                                      record_item.real_val : (double)record_item.int_val;
                         
-                        // 🔥 UE 버퍼에 추가
                         ue_buffer_t* ue_buf = get_or_create_ue_buffer(info.ueID);
                         if (ue_buf) {
-                            add_serving_sinr_to_buffer(ue_buf, info.cellID, sinr, simulation_timestamp);
+                            add_serving_sample(ue_buf, info.cellID, sinr, simulation_timestamp);
                         }
                     }
                 }
@@ -366,7 +429,7 @@ static void log_kpm_measurements(kpm_ind_msg_format_1_t const* msg_frm_1, uint64
         }
     }
     
-    // neighbor 정보 수집 (버퍼에 누적)
+    // neighbor 정보 수집
     for(size_t i = 0; i < msg_frm_1->meas_info_lst_len; i++) {
         meas_type_t const meas_type = msg_frm_1->meas_info_lst[i].meas_type;
         meas_data_lst_t const data_item = msg_frm_1->meas_data_lst[i];
@@ -384,20 +447,13 @@ static void log_kpm_measurements(kpm_ind_msg_format_1_t const* msg_frm_1, uint64
                             meas_record_lst_t const neighID = data_item.meas_record_lst[j + 1];
                             
                             if(sinr.value == REAL_MEAS_VALUE && neighID.value == INTEGER_MEAS_VALUE) {
-                                add_neighbor_sinr_to_buffer(ue_buf, neighID.int_val, sinr.real_val);
+                                add_neighbor_sample(ue_buf, neighID.int_val, sinr.real_val);
                             }
                         }
                     }
                 }
             }
         }
-    }
-    
-    // 🔥 5초가 지났으면 이동평균 계산 및 전송
-    if (should_process) {
-        process_and_send_averaged_data(simulation_timestamp);
-        last_prediction_time = simulation_timestamp;
-        printf("⏰ Next prediction scheduled at: %lu μs\n", last_prediction_time + PREDICTION_INTERVAL_US);
     }
 }
 
@@ -483,7 +539,8 @@ static void sm_cb_kpm(sm_ag_if_rd_t const* rd) {
         // CSV 헤더 출력 (첫 번째 indication에서만)
         if (indication_counter == 0) {
             if (log_file) {
-                fprintf(log_file, "timestamp,UE_ID,serving_cell_ID,serving_cell_SINR,neighbor1_ID,neighbor_1_SINR,neighbor2_ID,neighbor_2_SINR,neighbor3_ID,neighbor_3_SINR,serving_cell_x,serving_cell_y\n");
+                fprintf(log_file, "relative_timestamp,ueImsiComplete,L3 serving Id(m_cellId),L3 serving SINR_ma,L3 neigh Id 1 (cellId),L3 neigh SINR 1_ma,L3 neigh Id 2 (cellId),L3 neigh SINR 2_ma,L3 neigh Id 3 (cellId),L3 neigh SINR 3_ma,gNB_x,gNB_y\n"
+);
                 fflush(log_file);
             }
             printf("📋 CSV header written\n");
