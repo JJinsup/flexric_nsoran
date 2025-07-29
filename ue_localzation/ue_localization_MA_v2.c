@@ -169,9 +169,15 @@ static bool isMeasNameContains(const char* meas_name, const char* name) {
 // =============================================================================
 // UE별 이동평균 계산 및 전송 (학습 데이터와 동일한 방식)
 static void check_and_send_ue_data(ue_buffer_t* ue_buf, uint64_t timestamp) {
-    if (ue_buf->history_count == 0) {
+    if (ue_buf->history_count < WINDOW_SIZE) {
+        // 진행 상황 표시 (10개 단위)
+        if (ue_buf->history_count % 10 == 0 || ue_buf->history_count <= 5) {
+            printf("📊 UE_%d: Buffering... %d/%d samples collected\n", 
+                   ue_buf->ueID, ue_buf->history_count, WINDOW_SIZE);
+        }
         return;
     }
+    printf("🎯 UE_%d: Buffer ready! Starting sliding window transmission...\n", ue_buf->ueID);
     
     // 🔥 슬라이딩 윈도우 크기 결정
     int window_size = (ue_buf->history_count < WINDOW_SIZE) ? 
