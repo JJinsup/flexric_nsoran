@@ -1,112 +1,244 @@
-// m_reducedPmValues(true)로변경 -> report 되는 값 적어짐 (lte-enb-net-device.cc도변경했음)
-// Function to Calculate the average of PRBs
-double
-MmWaveEnbNetDevice::CalculatePrbAverage() 
-{
-  double totalPrbUtilization = 0;
-  auto ueMap = m_rrc->GetUeMap();
+/* -*-  Mode: C++; c-file-style: "gnu"; indent-tabs-mode:nil; -*- */
+/*
+*   Copyright (c) 2011 Centre Tecnologic de Telecomunicacions de Catalunya (CTTC)
+*   Copyright (c) 2015, NYU WIRELESS, Tandon School of Engineering, New York University
+*   Copyright (c) 2016, 2018, University of Padova, Dep. of Information Engineering, SIGNET lab.
+*   Copyright (c) 2024 Orange Innovation Egypt
+*
+*   This program is free software; you can redistribute it and/or modify
+*   it under the terms of the GNU General Public License version 2 as
+*   published by the Free Software Foundation;
+*
+*   This program is distributed in the hope that it will be useful,
+*   but WITHOUT ANY WARRANTY; without even the implied warranty of
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*   GNU General Public License for more details.
+*
+*   You should have received a copy of the GNU General Public License
+*   along with this program; if not, write to the Free Software
+*   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+*
+*   Author: Marco Miozzo <marco.miozzo@cttc.es>
+*           Nicola Baldo  <nbaldo@cttc.es>
+*
+*   Modified by: Marco Mezzavilla < mezzavilla@nyu.edu>
+*                         Sourjya Dutta <sdutta@nyu.edu>
+*                         Russell Ford <russell.ford@nyu.edu>
+*                         Menglei Zhang <menglei@nyu.edu>
+*                         Mostafa Ashraf <mostafa.ashraf.ext@orange.com>
+*                         Aya Kamal <aya.kamal.ext@orange.com>
+*                         Abdelrhman Soliman <abdelrhman.soliman.ext@orange.com>
+*
+*        Modified by: Tommaso Zugno <tommasozugno@gmail.com>
+*								 Integration of Carrier Aggregation
+*/
 
-  for (auto ue : ueMap)
-  {
-    uint16_t rnti = ue.second->GetRnti();
-    double macNumberOfSymbols = m_e2DuCalculator->GetMacNumberOfSymbolsUeSpecific(rnti, m_cellId);
-    
-    auto phyMac = GetMac()->GetConfigurationParameters();
-    Time reportingWindow = Simulator::Now() - m_e2DuCalculator->GetLastResetTime(rnti, m_cellId);
-    double denominatorPrb = std::ceil(reportingWindow.GetNanoSeconds() / 
-                           phyMac->GetSlotPeriod().GetNanoSeconds()) * 14;
 
-    if (denominatorPrb > 0)
-    {
-      totalPrbUtilization += (macNumberOfSymbols / denominatorPrb) * 139;
-    }
-  }
-  NS_LOG_DEBUG("Total PRB utilization: " << totalPrbUtilization);
 
-  long dlAvailablePrbs = 139;
-  double currentPrbValue = std::min((double)(totalPrbUtilization / dlAvailablePrbs * 100), 100.0);
+#ifndef SRC_MMWAVE_MODEL_MMWAVE_ENB_NET_DEVICE_H_
+#define SRC_MMWAVE_MODEL_MMWAVE_ENB_NET_DEVICE_H_
 
-  // Store current value
-  m_prbHistory.push_back(currentPrbValue);
-  
-  NS_LOG_DEBUG("Current PRB Value: " << currentPrbValue << 
-               " History Size: " << m_prbHistory.size() << "/" << MAX_PRB_HISTORY);
 
-  // Only return average when we have exactly MAX_PRB_HISTORY points
-  if (m_prbHistory.size() == MAX_PRB_HISTORY)
-  {
-    double sum = 0;
-    for (auto prb : m_prbHistory)
-    {
-      sum += prb;
-    }
-    double average = sum / MAX_PRB_HISTORY;
-    
-    // Remove oldest value to maintain window
-    m_prbHistory.erase(m_prbHistory.begin());
-    
-    NS_LOG_DEBUG("Returning PRB Average: " << average);
-    return average;
-  }
-  
-  // Return -1 to indicate not enough points yet
-  NS_LOG_DEBUG("Not enough points yet, returning 0");
-  return 0;
-}
+#include "mmwave-net-device.h"
+#include "ns3/event-id.h"
+#include "ns3/traced-callback.h"
+#include "ns3/nstime.h"
+#include "mmwave-phy.h"
+#include "mmwave-enb-phy.h"
+#include "mmwave-enb-mac.h"
+#include "mmwave-mac-scheduler.h"
+#include <vector>
+#include <map>
+#include <ns3/lte-enb-rrc.h>
+#include <ns3/oran-interface.h>
+#include "ns3/mmwave-bearer-stats-calculator.h"
+#include <ns3/mmwave-phy-trace.h>
 
-void
-MmWaveEnbNetDevice::CheckReportingFlag()
-{
-  NS_LOG_FUNCTION(this);
-  if (!m_stopSendingMessages && m_hasValidSubscription)
-  {
-    const auto &sub_map = m_e2term->SubscriptionMapRef();
-    if (!sub_map.empty())
-    {
-      try 
-      {
-        const auto& expr = sub_map.at("Test Condition Expression");
-        const auto& value = sub_map.at("Test Condition Value");
-        
-        int index = std::any_cast<int>(expr);
-        int threshold = std::any_cast<int>(value);
 
-        // Get current PRB average
-        double currentPrbAvg = CalculatePrbAverage();
-        
-        // Only check conditions if we have enough points
-        if (currentPrbAvg >= 0)
-        {
-          bool shouldReport = MATH_CALL_BACKS[index](currentPrbAvg, threshold);
-          //Jinseop 여기를 항상 TRUE처리 -> 항상 REPORT
-          shouldReport = true;
-          NS_LOG_DEBUG("Current PRB Average: " << currentPrbAvg << 
-                       " Threshold: " << threshold << 
-                       " Should Report: " << m_is_reported);
-          // If we haven't started reporting yet, check if we should start
-          if (!m_isReportingEnabled)
-          {
-            if (shouldReport)
-            {
-              m_is_reported = true;
-              m_isReportingEnabled = true;
-              BuildAndSendReportMessage(m_lastSubscriptionParams);
-            }
-          }
-          else
-          {
-           // If reporting is already enabled, keep sending reports
-           BuildAndSendReportMessage(m_lastSubscriptionParams);
-          }
-        }
-      }
-      catch (const std::exception& e)
-      {
-        NS_LOG_ERROR("Error checking PRB usage: " << e.what());
-      }
-    }
-    // Schedule next check
-    Simulator::ScheduleWithContext(1, m_checkPeriod,
-        &MmWaveEnbNetDevice::CheckReportingFlag, this);
-  }
-}
+
+#include "TestCond-Type.h"
+#include "TestCond-Expression.h"
+#include "TestCond-Value.h"
+#include "E2SM-KPM-ActionDefinition.h"
+#include <functional>
+
+
+namespace ns3 {
+/* Add forward declarations here */
+    class Packet;
+
+    class PacketBurst;
+
+    class Node;
+
+    class LteEnbComponentCarrierManager;
+
+  namespace mmwave {
+//class MmWavePhy;
+        class MmWaveEnbPhy;
+
+        class MmWaveEnbMac;
+
+        typedef std::pair <uint64_t, uint16_t> ImsiCellIdPair_t;
+
+
+        bool lessThan(int x, int y);
+        bool greaterThan(int x, int y);
+        bool equal(int x, int y);
+
+      // Declare the MATH_CALL_BACKS vector
+      extern std::vector<std::function<bool(int, int)>> MATH_CALL_BACKS;
+
+
+      class MmWaveEnbNetDevice : public MmWaveNetDevice {
+        public:
+            const static uint16_t E2SM_REPORT_MAX_NEIGH = 8;
+
+            static TypeId GetTypeId(void);
+
+            MmWaveEnbNetDevice();
+            // MmWaveEnbNetDevice(Ptr<E2Termination> e2Termination);
+
+            virtual ~MmWaveEnbNetDevice(void);
+
+            virtual void DoDispose(void) override;
+
+            virtual bool DoSend(Ptr<Packet> packet, const Address &dest, uint16_t protocolNumber) override;
+
+            Ptr<MmWaveEnbPhy> GetPhy(void) const;
+
+            Ptr<MmWaveEnbPhy> GetPhy(uint8_t index);
+
+            uint16_t GetCellId() const;
+
+            std::map<uint16_t, Ptr<UeManager>> GetUeMap ();
+
+            bool HasCellId(uint16_t cellId) const;
+
+            uint8_t GetBandwidth() const;
+
+            void SetBandwidth(uint8_t bw);
+
+            Ptr<MmWaveEnbMac> GetMac(void);
+
+            Ptr<MmWaveEnbMac> GetMac(uint8_t index);
+
+            void SetRrc(Ptr<LteEnbRrc> rrc);
+
+            Ptr<LteEnbRrc> GetRrc(void);
+
+            void SetE2Termination(Ptr<E2Termination> e2term);
+
+            Ptr<E2Termination> GetE2Termination() const;
+
+            void SetCcMap(std::map <uint8_t, Ptr<MmWaveComponentCarrier>> ccm) override;
+
+            void BuildAndSendReportMessage(E2Termination::RicSubscriptionRequest_rval_s params = E2Termination::RicSubscriptionRequest_rval_s());
+
+            void KpmSubscriptionCallback(E2AP_PDU_t *sub_req_pdu);
+
+            void ControlMessageReceivedCallback(E2AP_PDU_t *sub_req_pdu);
+            void SetStartTime(uint64_t);
+
+            void stopSendingAndCancelSchedule();
+
+        protected:
+            virtual void DoInitialize(void) override;
+
+            void UpdateConfig();
+
+            void GetPeriodicPdcpStats();
+
+
+        private:
+
+            bool m_stopSendingMessages;
+
+            Ptr<MmWaveMacScheduler> m_scheduler;
+
+            Ptr<LteEnbRrc> m_rrc;
+
+            uint16_t m_cellId;       /* Cell Identifer. To uniquely identify an E-nodeB  */
+
+            uint8_t m_Bandwidth;       /* bandwidth in RBs (?) */
+
+            Ptr<LteEnbComponentCarrierManager> m_componentCarrierManager; ///< the component carrier manager of this eNb
+
+            bool m_isConfigured;
+
+            Ptr<E2Termination> m_e2term;
+            Ptr<MmWaveBearerStatsCalculator> m_e2PdcpStatsCalculator;
+            Ptr<MmWaveBearerStatsCalculator> m_e2RlcStatsCalculator;
+            Ptr<MmWavePhyTrace> m_e2DuCalculator;
+
+            bool m_is_reported = false;
+            int DL_PRBvalue ; 
+            double m_e2Periodicity;
+
+            // TODO doxy
+            Ptr<KpmIndicationHeader> BuildRicIndicationHeader(std::string plmId, std::string gnbId, uint16_t nrCellId);
+
+            Ptr<KpmIndicationMessage> BuildRicIndicationMessageCuUp(std::string plmId);
+
+            Ptr<KpmIndicationMessage> BuildRicIndicationMessageCuCp(std::string plmId);
+
+            Ptr<KpmIndicationMessage> BuildRicIndicationMessageDu(std::string plmId, uint16_t nrCellId);
+
+            //traces for gui
+            Ptr<KpmIndicationMessage> BuildGUIDu(std::string plmId, uint16_t nrCellId);
+            Ptr<KpmIndicationMessage> BuildGUICuCp(std::string plmId);
+            Ptr<KpmIndicationMessage> BuildGUICuUp(std::string plmId);
+
+            std::string GetImsiString(uint64_t imsi);
+
+            uint32_t GetRlcBufferOccupancy(Ptr<LteRlc> rlc) const;
+
+            bool m_sendCuUp;
+            bool m_sendCuCp;
+            bool m_sendDu;
+
+            static void
+            RegisterNewSinrReadingCallback(Ptr<MmWaveEnbNetDevice> netDev, std::string context, uint64_t imsi,
+                                           uint16_t cellId, long double sinr);
+
+            void RegisterNewSinrReading(uint64_t imsi, uint16_t cellId, long double sinr);
+
+            std::map <uint64_t, std::map<uint16_t, long double>> m_l3sinrMap;
+            uint64_t m_startTime;
+            std::map <uint64_t, uint32_t> m_drbThrDlPdcpBasedComputationUeid;
+            std::map <uint64_t, uint32_t> m_drbThrDlUeid;
+            bool m_isReportingEnabled; //! true is KPM reporting cycle is active, false otherwise
+            bool m_reducedPmValues; //< if true use a reduced subset of pmvalues
+
+            uint16_t m_basicCellId;
+            double  rc_e2_func_id ; // to RC
+            double e2_func_id; //to pass kpm function id
+            bool m_e2andlog; //if true, both e2 term and e2file logging will work
+            bool m_forceE2FileLogging; //< if true log PMs to files
+            std::string m_cuUpFileName;
+            std::string m_cuCpFileName;
+            std::string m_duFileName;
+
+            double CalculatePrbAverage (void);
+            void CheckReportingFlag (void);
+            void NewFunction (bool m_is_reported);
+            // 진섭
+            double CalculateOptimalMomentCondition();
+
+            std::vector<double> m_prbHistory;
+            static const size_t MAX_PRB_HISTORY = 5;
+            Time m_checkPeriod;
+            E2Termination::RicSubscriptionRequest_rval_s m_lastSubscriptionParams;
+            bool m_hasValidSubscription;
+       
+            //진섭
+            std::map<uint64_t, double> m_lastSinrValues;            
+
+
+      };
+  } 
+ }
+
+
+
+#endif /* SRC_MMWAVE_MODEL_MMWAVE_ENB_NET_DEVICE_H_ */
