@@ -277,7 +277,7 @@ static void check_and_send_ue_data(ue_buffer_t* ue_buf, uint64_t timestamp) {
     char line[512];
     snprintf(line, sizeof(line),
         "%lu,%d,%d,%.6f,%d,%.6f,%d,%.6f,%d,%.6f,%.1f,%.1f\n",
-        timestamp / 1000,  // relative_timestamp (ms)
+        timestamp / 1000000,  // relative_timestamp (ms)
         ue_buf->ueID,      // ueImsiComplete
         ue_buf->servingCellID,  // L3 serving Id(m_cellId)
         serving_sinr_ma,   // L3 serving SINR_ma (슬라이딩 윈도우 평균!)
