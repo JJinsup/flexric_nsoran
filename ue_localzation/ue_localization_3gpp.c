@@ -270,7 +270,7 @@ static void check_and_send_ue_data(ue_buffer_t* ue_buf, uint64_t sequence_timest
             uint16_t neighID = ue_buf->measurement_history[read_idx].neighbor_ids[j];
             double neighSINR = ue_buf->measurement_history[read_idx].neighbor_sinrs[j];
 
-            if (!isnan(neighSINR) || neighID == 0) continue;
+            if (isnan(neighSINR) || neighID == 0) continue;
 
             // 기존 neighbor 찾기
             int found_idx = -1;
