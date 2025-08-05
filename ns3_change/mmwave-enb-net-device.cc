@@ -1089,7 +1089,7 @@ MmWaveEnbNetDevice::BuildRicIndicationMessageCuCp (std::string plmId)
       // for the same cell
       double sinrThisCell = 10 * std::log10 (m_l3sinrMap[imsi][m_cellId]);
       double convertedSinr = L3RrcMeasurements::ThreeGppMapSinr (sinrThisCell);
-
+//진섭 이부분 수정하면 SINR FORMAT 변경 가능
       Ptr<L3RrcMeasurements> l3RrcMeasurementServing;
       if (!indicationMessageHelper->IsOffline ())
         {
@@ -1148,6 +1148,7 @@ MmWaveEnbNetDevice::BuildRicIndicationMessageCuCp (std::string plmId)
             }
           sinr = 10 * std::log10 (it->first); // now SINR is a key due to the sort of the map
           convertedSinr = L3RrcMeasurements::ThreeGppMapSinr (sinr);
+          //진섭 이부분 수정하면 SINR FORMAT 변경 가능
           if (!indicationMessageHelper->IsOffline ())
             {
               // l3RrcMeasurementNeigh->AddNeighbourCellMeasurement (cellId, convertedSinr);
