@@ -3,14 +3,11 @@
  * UE Position Prediction Optimized Scenario
  * 
  * Key Changes:
- * - 7 Base Stations (1 eNB + 6 gNB) in hexagonal layout
- * - 56 UEs for sufficient data collection
- * - ISD optimized for handover frequency
- * - Energy saving components removed
- * - Enhanced position tracking and logging
- * 
- * Copyright (c) 2024 Orange Innovation Poland
- * Copyright (c) 2024 Orange Innovation Egypt
+ * - 7 Base Stations (1 eNB + 6 gNB) in hexagonal layout 1.6km*1.6km
+ * - 28 UEs for sufficient data collection
+ * - UE,gNB z = {1.5, 10}
+ * - UE ISD, gNB ISD = {700, 500}
+ * - ThreeGPP Urban Micro Street Canyon Model
  */
 #include "ns3/core-module.h"
 #include "ns3/network-module.h"
@@ -35,6 +32,7 @@
 #include <cmath>
 #include <fstream>
 #include "ns3/isotropic-antenna-model.h"
+#include "ns3/mmwave-bearer-stats-connector.h"
 
 using namespace ns3;
 using namespace mmwave;
@@ -184,10 +182,10 @@ PrintPosition(Ptr<Node> node, int iterator, std::string Filename, uint64_t m_sta
             Ptr<MobilityModel> model = node->GetObject<MobilityModel>();
             Vector position = model->GetPosition();
             
-            NS_LOG_UNCOND("Position of UE with IMSI " << imsi << " is " << model->GetPosition()
+            /*NS_LOG_UNCOND("Position of UE with IMSI " << imsi << " is " << model->GetPosition()
                                                      << " at time "
                                                      << Simulator::Now().GetSeconds()
-                                                     << ", UE connected to Cell: " << serving_cell);
+                                                     << ", UE connected to Cell: " << serving_cell);*/
             
             outFile.open(filename.c_str(), std::ios_base::out | std::ios_base::app);
             if (!outFile.is_open()) {
@@ -231,14 +229,14 @@ static ns3::GlobalValue g_reducedPmValues("reducedPmValues", "If true, use a sub
 // Enhanced for position prediction
 static ns3::GlobalValue g_hoSinrDifference("hoSinrDifference",
                         "The value for which an handover between MmWave eNB is triggered",
-                        ns3::DoubleValue(3), ns3::MakeDoubleChecker<double>()); // Reduced for more HOs
+                        ns3::DoubleValue(3), ns3::MakeDoubleChecker<double>());
 
 static ns3::GlobalValue g_indicationPeriodicity("indicationPeriodicity",
                              "E2 Indication Periodicity reports (value in seconds)",
                              ns3::DoubleValue(0.1), ns3::MakeDoubleChecker<double>(0.01, 2.0));
 
 static ns3::GlobalValue g_simTime("simTime", "Simulation time in seconds", 
-                                   ns3::DoubleValue(90), // 10 minutes for sufficient data
+                                   ns3::DoubleValue(600), 
                                    ns3::MakeDoubleChecker<double>(0.1, 100000.0));
 
 static ns3::GlobalValue g_outageThreshold("outageThreshold",
@@ -278,11 +276,11 @@ static ns3::GlobalValue g_controlFileName("controlFileName",
 
 // Position Prediction Optimized Parameters
 static ns3::GlobalValue mmWave_nodes ("N_MmWaveEnbNodes", "Number of mmWaveNodes",
-                                      ns3::UintegerValue (7), // Changed from 4 to 7
+                                      ns3::UintegerValue (7),
                                       ns3::MakeUintegerChecker<uint8_t> ());
 
 static ns3::GlobalValue ue_s ("N_Ues", "Number of User Equipments",
-                              ns3::UintegerValue (28), // Changed from 3 to 28
+                              ns3::UintegerValue (28),
                               ns3::MakeUintegerChecker<uint32_t> ());
 
 static ns3::GlobalValue center_freq ("CenterFrequency", "Center Frequency Value",
@@ -294,17 +292,19 @@ static ns3::GlobalValue bandwidth_value ("Bandwidth", "Bandwidth Value",
                                          ns3::MakeDoubleChecker<double> ());
 
 static ns3::GlobalValue interside_distance_value_ue ("IntersideDistanceUEs", "Interside Distance Value",
-                                      ns3::DoubleValue (450), 
+                                      ns3::DoubleValue (700), 
                                       ns3::MakeDoubleChecker<double> ());
 
 static ns3::GlobalValue interside_distance_value_cell ("IntersideDistanceCells", "Interside Distance Value",
-                                                  ns3::DoubleValue (400), // Changed from 600 to 400
+                                                  ns3::DoubleValue (500),
                                                   ns3::MakeDoubleChecker<double> ());
 
 int
 main(int argc, char *argv[]) {
     LogComponentEnableAll(LOG_PREFIX_ALL);
-    LogComponentEnable ("MmWaveEnbNetDevice", LOG_LEVEL_FUNCTION);
+    //LogComponentEnable ("MmWaveEnbNetDevice", LOG_LEVEL_INFO);
+    //LogComponentEnable("LteEnbRrc", LOG_LEVEL_INFO);
+    //LogComponentEnable("LteUeRrc", LOG_LEVEL_INFO);
 
     // Field dimensions
     maxXAxis = 1600;
@@ -413,13 +413,14 @@ main(int argc, char *argv[]) {
     Config::SetDefault("ns3::LteRlcUmLowLat::MaxTxBufferSize", UintegerValue(bufferSize * 1024 * 1024));
     Config::SetDefault("ns3::LteRlcAm::MaxTxBufferSize", UintegerValue(bufferSize * 1024 * 1024));
 
-    // Enhanced handover settings for position prediction
+    // 진섭 : 휴리스틱 핸드오버 활성화용 
+    Config::SetDefault("ns3::LteEnbRrc::AllowAutonomousHoWithE2", BooleanValue(true));
+
     Config::SetDefault("ns3::LteEnbRrc::OutageThreshold", DoubleValue(outageThreshold));
     Config::SetDefault("ns3::LteEnbRrc::SecondaryCellHandoverMode", StringValue(handoverMode));
     Config::SetDefault("ns3::LteEnbRrc::HoSinrDifference", DoubleValue(hoSinrDifference));
     Config::SetDefault("ns3::ThreeGppPropagationLossModel::Frequency", DoubleValue(3.5e9));
     Config::SetDefault("ns3::ThreeGppPropagationLossModel::ShadowingEnabled", BooleanValue(false));
-
     // Network parameters
     double bandwidth = 20e6;
     double centerFrequency = 3.5e9;
@@ -495,7 +496,7 @@ main(int argc, char *argv[]) {
     NodeContainerManager::GetInstance().SetMmWaveEnbNodes(mmWaveEnbNodes);
 
     // Enhanced hexagonal base station positioning
-    Vector centerPosition = Vector(maxXAxis / 2, maxYAxis / 2, 3);
+    Vector centerPosition = Vector(maxXAxis / 2, maxYAxis / 2, 10);
 
     Ptr<ListPositionAllocator> enbPositionAlloc = CreateObject<ListPositionAllocator>();
 
@@ -511,7 +512,7 @@ main(int argc, char *argv[]) {
         double angle = (i * 60.0) * M_PI / 180.0; // FIXED: 60 degrees apart for 6 stations
         double x = centerPosition.x + isd_cell * cos(angle);
         double y = centerPosition.y + isd_cell * sin(angle);
-        enbPositionAlloc->Add(Vector(x, y, 3));
+        enbPositionAlloc->Add(Vector(x, y, 10));
         NS_LOG_UNCOND("gNB " << unsigned(i+3) << ": (" << x << ", " << y << ")");
     }
 
@@ -520,23 +521,40 @@ main(int argc, char *argv[]) {
     enbmobility.SetPositionAllocator(enbPositionAlloc);
     enbmobility.Install(allEnbNodes);
 
-    // Enhanced UE mobility for position prediction
+    // Enhanced UE mobility for prediction
     MobilityHelper uemobility;
-    Ptr<UniformDiscPositionAllocator> uePositionAlloc = CreateObject<UniformDiscPositionAllocator>();
-    uePositionAlloc->SetX(centerPosition.x);
-    uePositionAlloc->SetY(centerPosition.y);
-    uePositionAlloc->SetRho(isd_ue); // 380m radius
 
-    // Diverse speed distribution for better position prediction data
+    // 속도 설정 (기존 범위 그대로 또는 조정)
     Ptr<UniformRandomVariable> speed = CreateObject<UniformRandomVariable>();
-    speed->SetAttribute("Min", DoubleValue(2.0));  // 2 m/s (pedestrian)
-    speed->SetAttribute("Max", DoubleValue(5.0)); // 5 m/s (Runner)
+    speed->SetAttribute("Min", DoubleValue(1.0));   
+    speed->SetAttribute("Max", DoubleValue(5.0));   
 
-    uemobility.SetMobilityModel("ns3::RandomWalk2dOutdoorMobilityModel", "Speed",
-                                PointerValue(speed), "Bounds",
-                                RectangleValue(Rectangle(0, maxXAxis, 0, maxYAxis)));
-    uemobility.SetPositionAllocator(uePositionAlloc);
+    // 방향 설정 (0~360도)
+    Ptr<UniformRandomVariable> direction = CreateObject<UniformRandomVariable>();
+    direction->SetAttribute("Min", DoubleValue(0.0));
+    direction->SetAttribute("Max", DoubleValue(6.283185)); // 2*PI
+
+    // RandomWalk2d 모델 설정
+    uemobility.SetMobilityModel("ns3::RandomWalk2dMobilityModel",
+                            "Mode", StringValue("Time"),               // 시간 기반 모드
+                            "Time", StringValue("50s"),                // 60초마다 방향/속도 변경
+                            "Speed", PointerValue(speed),              // 속도 범위
+                            "Direction", PointerValue(direction),      // 방향 범위
+                            "Bounds", RectangleValue(Rectangle(0, maxXAxis, 0, maxYAxis))); // 경계 설정
+
     uemobility.Install(ueNodes);
+
+    // 🔥 설치 후 초기 위치 수동 설정
+    Ptr<UniformDiscPositionAllocator> initialPos = CreateObject<UniformDiscPositionAllocator>();
+    initialPos->SetX(centerPosition.x);
+    initialPos->SetY(centerPosition.y);
+    initialPos->SetRho(isd_ue);
+    initialPos->SetZ(1.5);  // UE 높이 설정
+
+for (uint32_t i = 0; i < ueNodes.GetN(); ++i) {
+    Vector pos = initialPos->GetNext();
+    ueNodes.Get(i)->GetObject<MobilityModel>()->SetPosition(pos);
+}
 
     NS_LOG_UNCOND("=== Mobility Configuration ===");
     NS_LOG_UNCOND("UE Speed Range: 2-5 m/s");
