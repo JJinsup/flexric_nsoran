@@ -36,7 +36,7 @@ static bool monitoring_active = true;
 static uint64_t const period_ms = 100;  
 static int indication_counter = 0;
 static FILE *log_file = NULL;
-static uint64_t current_sequence_timestamp = 0;  // 0, 100, 200, 300...
+static uint64_t current_sequence_timestamp = 0;  // 0, 1,2
 static int current_burst_ue_count = 0;           // 현재 burst에서 받은 UE 개수
 static bool burst_sequence_assigned[TOTAL_UES] = {false}; // UE별 sequence 할당 여부
 // =============================================================================
