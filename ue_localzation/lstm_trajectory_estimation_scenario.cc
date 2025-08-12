@@ -3,11 +3,14 @@
  * UE Position Prediction Optimized Scenario
  * 
  * Key Changes:
- * - 7 Base Stations (1 eNB + 6 gNB) in hexagonal layout 1.6km*1.6km
- * - 28 UEs for sufficient data collection
- * - UE,gNB z = {1.5, 10}
- * - UE ISD, gNB ISD = {700, 500}
- * - ThreeGPP Urban Micro Street Canyon Model
+ * - 7 Base Stations (1 eNB + 6 gNB) in hexagonal layout
+ * - 56 UEs for sufficient data collection
+ * - ISD optimized for handover frequency
+ * - Energy saving components removed
+ * - Enhanced position tracking and logging
+ * 
+ * Copyright (c) 2024 Orange Innovation Poland
+ * Copyright (c) 2024 Orange Innovation Egypt
  */
 #include "ns3/core-module.h"
 #include "ns3/network-module.h"
